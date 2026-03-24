@@ -37,15 +37,15 @@ class CSP2DApp:
 
     def init_CSP(self):
         self.canvas.delete("all")
-        atom_radius = 15
-        random.seed(hash(self.user_string.get()))
+        random.seed(self.user_string.get())
         self.crystal = UnitCell(num_atoms=NUM_ATOMS, frame_center=FRAME_CENTER)
 
         # set up uc in frame
         self.uc_bounds = [[FRAME_CENTER[0] - (self.crystal.lattice_x / 2), FRAME_CENTER[0] + (self.crystal.lattice_x / 2)],
                      [FRAME_CENTER[1] - (self.crystal.lattice_y / 2), FRAME_CENTER[1] + (self.crystal.lattice_y / 2)]]
-        self.canvas.create_rectangle(self.uc_bounds[0][0], self.uc_bounds[1][1],
+        self.graphic_cell = self.canvas.create_rectangle(self.uc_bounds[0][0], self.uc_bounds[1][1],
                                      self.uc_bounds[0][1], self.uc_bounds[1][0])
+        self.text = self.canvas.create_text(100, 10, text="Energy: ???")
 
         # set up atoms in canvas
         self.c_atoms = []
@@ -79,8 +79,18 @@ class CSP2DApp:
                 graphic_coords = self.crystal.images[image_ind].graphic_coords
                 self.canvas.coords(image, graphic_coords[0], graphic_coords[1], graphic_coords[2], graphic_coords[3])
 
+            self.uc_bounds = [
+                [FRAME_CENTER[0] - (self.crystal.lattice_x / 2), FRAME_CENTER[0] + (self.crystal.lattice_x / 2)],
+                [FRAME_CENTER[1] - (self.crystal.lattice_y / 2), FRAME_CENTER[1] + (self.crystal.lattice_y / 2)]]
+            self.canvas.coords(self.graphic_cell, self.uc_bounds[0][0], self.uc_bounds[1][1],
+                                     self.uc_bounds[0][1], self.uc_bounds[1][0])
+
+            energy = self.crystal.get_energy()
+            self.canvas.itemconfigure(self.text, text="Energy: " + str(round(energy, 5)))
+
             # Schedule the next frame (16 = 60fps, 32 = 32fps, 64 = 16fps)
-            self.root.after(128, self.take_step, num_steps + 1, max_steps)
+            self.root.after(16, self.take_step, num_steps + 1, max_steps)
+
 
 
 if __name__ == "__main__":

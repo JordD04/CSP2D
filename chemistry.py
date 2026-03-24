@@ -36,6 +36,7 @@ def calc_lj_force(r, epsilon, sigma):
     return 0.5 * coefficient * (repulsive + attractive)
 
 def calc_lj_energy(r, epsilon, sigma):
+    #print(r)
     coefficient = 4 * epsilon
     repulsive = (sigma ** 12) * (r ** (-12))
     attractive = (sigma ** 6) * (r ** (-6))

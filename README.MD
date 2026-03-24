@@ -7,9 +7,10 @@
  - Variable atomic positions
  - Gradient descent
  - Lennard-Jones forces
+ - Variable cells
 
 ## Upcoming Features
- - Variable cells
  - Symmetry
  - BFGS
  - Molecules
+ - Convergence Plot

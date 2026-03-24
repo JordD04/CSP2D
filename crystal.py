@@ -1,4 +1,6 @@
 import random
+from copy import deepcopy
+
 import numpy as np
 
 from chemistry import *
@@ -42,23 +44,20 @@ class Atom:
             wrapping_vector[1] += lattice_y
 
         self.coords += wrapping_vector
-        corr_vector = vector + wrapping_vector
-
-        # generate vector for graphics
-        graphics_vector = np.asarray([corr_vector[0], corr_vector[1],
-                                      corr_vector[0], corr_vector[1]])
-        self.graphic_coords += graphics_vector
+        self.graphic_coords = np.asarray([self.coords[0] - self.radius, self.coords[1] - self.radius,
+                                          self.coords[0] + self.radius, self.coords[1] + self.radius])
 
 
 class UnitCell:
     def __init__(self, num_atoms, frame_center):
         # this doesn't do anything yet
         self.wpg = random.choice(['p1', 'p2', 'pmm', 'p4'])
+        self.step_size = 30
 
+        self.frame_center = frame_center
         self.lattice_x = (random.random() * 100) + 50
         self.lattice_y = (random.random() * 100) + 50
-        # this offsets puts the center of the unit cell in the center of the frame
-        self.lattice_offset = frame_center - np.asarray([self.lattice_x/2, self.lattice_y/2])
+        self.calc_lattice_offset()
 
         self.num_atoms = num_atoms
         self.atoms = []
@@ -67,6 +66,11 @@ class UnitCell:
             self.create_atoms(type='LJ')
 
         self.update_images()
+
+
+    def calc_lattice_offset(self):
+        # this offsets puts the center of the unit cell in the center of the frame
+        self.lattice_offset = self.frame_center - np.asarray([self.lattice_x / 2, self.lattice_y / 2])
 
 
     def create_atoms(self, type):
@@ -94,6 +98,8 @@ class UnitCell:
 
         self.image_coords = np.asarray([image.coords for image in self.images])
 
+        self.aa_vectors = None
+
 
     def random_step(self):
         for atom in self.atoms:
@@ -103,7 +109,49 @@ class UnitCell:
 
         self.update_images()
 
+
+    def get_atom_atom_vectors(self):
+        self.aa_vectors = []
+        for ind0, atom0 in enumerate(self.atoms):
+            aa_vector_atom0 = []
+            for ind1, atom1 in enumerate(self.atoms):
+                if not ind0 == ind1:
+                    r = calc_r(atom0.coords, atom1.coords)
+                else:
+                    r = 0
+                aa_vector_atom0.append(r)
+
+            pbc_rs = calc_r(atom0.coords, self.image_coords)
+            aa_vector_atom0.append(pbc_rs)
+            self.aa_vectors.append(aa_vector_atom0)
+
+
+    def get_energy(self):
+        if self.aa_vectors == None:
+            self.get_atom_atom_vectors()
+
+        total_energy = 0
+        for ind0, atom0 in enumerate(self.atoms):
+            for ind1, atom1 in enumerate(self.atoms):
+                if not ind0 == ind1:
+                    #r = calc_r(atom0.coords, atom1.coords)
+                    r = self.aa_vectors[ind0][ind1]
+                    energy = calc_lj_energy(r, atom0.epsilon, atom0.sigma)
+                    total_energy += energy
+
+            #pbc_rs = calc_r(atom0.coords, self.image_coords)
+            pbc_rs = self.aa_vectors[ind0][-1]
+            pbc_energies = calc_lj_energy(pbc_rs, atom0.epsilon, atom0.sigma)
+            for pbc_energy in pbc_energies:
+                total_energy += pbc_energy
+
+        return total_energy
+
+
     def get_forces(self):
+        if self.aa_vectors == None:
+            self.get_atom_atom_vectors()
+
         forces = {"resultant_forces" : [],
                     "component_forces" : []}
 
@@ -112,12 +160,14 @@ class UnitCell:
             component_forces = []
             for ind1, atom1 in enumerate(self.atoms):
                 if not ind0 == ind1:
-                    r = calc_r(atom0.coords, atom1.coords)
+                    #r = calc_r(atom0.coords, atom1.coords)
+                    r = self.aa_vectors[ind0][ind1]
                     force = calc_lj_force(r, atom0.epsilon, atom0.sigma)
                     vector = calc_atom_atom_vector(atom0.coords, atom1.coords)
                     component_forces.append(calc_force_vector(force, vector))
 
-            pbc_rs = calc_r(atom0.coords, self.image_coords)
+            #pbc_rs = calc_r(atom0.coords, self.image_coords)
+            pbc_rs = self.aa_vectors[ind0][-1]
             pbc_forces = calc_lj_force(pbc_rs, atom0.epsilon, atom0.sigma)
             pbc_vectors = calc_atom_atom_vector(atom0.coords, self.image_coords)
             pbc_force_vectors = calc_force_vector(pbc_forces, pbc_vectors)
@@ -135,9 +185,62 @@ class UnitCell:
 
         return forces
 
+
+    def get_stress(self):
+        lattice_shift = 5
+        if self.aa_vectors == None:
+            self.get_atom_atom_vectors()
+
+        stress_tensor = np.zeros((2,2))  # [ [xx, xy], [yx, yy] ]
+        volume = self.lattice_x * self.lattice_y
+
+        frac_coords = []
+        for atom in self.atoms:
+            coords = atom.coords
+            atom_frac_coords = (coords - self.lattice_offset) / np.array([self.lattice_x, self.lattice_y])
+            frac_coords.append(atom_frac_coords)
+
+        for axis in ['x', 'y']:
+            ext_cell = deepcopy(self)
+            comp_cell = deepcopy(self)
+            if axis == 'x':
+                ext_cell.lattice_x = self.lattice_x + lattice_shift
+                comp_cell.lattice_x = self.lattice_x - lattice_shift
+            elif axis == 'y':
+                ext_cell.lattice_y = self.lattice_y + lattice_shift
+                comp_cell.lattice_y = self.lattice_y - lattice_shift
+
+            ext_cell.calc_lattice_offset()
+            comp_cell.calc_lattice_offset()
+
+            for ind, atom_frac_coords in enumerate(frac_coords):
+                ext_cell.atoms[ind].coords = ext_cell.lattice_offset + (atom_frac_coords * np.array([ext_cell.lattice_x, ext_cell.lattice_y]))
+                ext_cell.update_images()
+
+                comp_cell.atoms[ind].coords = comp_cell.lattice_offset + (atom_frac_coords * np.array([comp_cell.lattice_x, comp_cell.lattice_y]))
+                comp_cell.update_images()
+
+            energy_change = comp_cell.get_energy() - ext_cell.get_energy()
+            if axis == 'x':
+                strain = 2 / self.lattice_x
+            elif axis == 'y':
+                strain = 2 / self.lattice_y
+
+            stress = ((lattice_shift * 2) / volume) * (energy_change / strain)
+            if axis == 'x':
+                stress_tensor[0][0] = stress
+            elif axis == 'y':
+                stress_tensor[1][1] = stress
+
+        return stress_tensor
+
     #move every atom together
-    def descend_gradient(self, step_size=30):
+    def descend_gradient(self, variable_cell=True):
+        if self.aa_vectors == None:
+            self.get_atom_atom_vectors()
+        #energy = self.get_energy()
         forces = self.get_forces()
+        stress = self.get_stress()
 
         max_force = 0
         for force in forces["resultant_forces"]:
@@ -146,8 +249,35 @@ class UnitCell:
                 max_force = max_force_local
 
         for ind, atom in enumerate(self.atoms):
-            vector = step_size * forces["resultant_forces"][ind]
+            vector = self.step_size * forces["resultant_forces"][ind]
             vector = limit_vector_mag(vector)
             atom.update_coords(vector, self.lattice_x, self.lattice_y, self.lattice_offset)
 
+        # update lattice parameters
+        if variable_cell:
+            frac_coords = []
+            for atom in self.atoms:
+                coords = atom.coords
+                atom_frac_coords = (coords - self.lattice_offset) / np.array([self.lattice_x, self.lattice_y])
+                frac_coords.append(atom_frac_coords)
+
+            x_step = self.step_size * stress[0][0]
+            y_step = self.step_size * stress[1][1]
+            max_lattice_shift = 1.5
+            if x_step > max_lattice_shift:
+                x_step = max_lattice_shift
+            elif x_step < -max_lattice_shift:
+                x_step = -max_lattice_shift
+            if y_step > max_lattice_shift:
+                y_step = max_lattice_shift
+            elif y_step < -max_lattice_shift:
+                y_step = -max_lattice_shift
+            self.lattice_x += x_step
+            self.lattice_y += y_step
+            self.calc_lattice_offset()
+            for ind, atom_frac_coords in enumerate(frac_coords):
+                self.atoms[ind].coords = self.lattice_offset + (atom_frac_coords * np.array([self.lattice_x, self.lattice_y]))
+
         self.update_images()
+
+        self.step_size = self.step_size * 0.99
