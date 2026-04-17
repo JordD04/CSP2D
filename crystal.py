@@ -1,8 +1,6 @@
 import random
 from copy import deepcopy
-
-import numpy as np
-
+import math
 from chemistry import *
 
 def get_random_coords():
@@ -12,60 +10,79 @@ def get_random_coords():
 
     return x, y
 
-class Atom:
-    def __init__(self, coords, type, colourless=False):
-        self.coords = coords
-        typing = ATOM_TYPING[type]
-        self.epsilon = typing['epsilon']
-        self.sigma = typing['sigma']
-        if colourless:
-            self.colour = 'white'
-        else:
-            self.colour = typing['colour']
-        self.radius = typing['radius']
-        self.type = type
+def get_random_rotation():
 
-        self.graphic_coords = np.asarray([coords[0] - self.radius, coords[1] - self.radius,
-                                          coords[0] + self.radius, coords[1] + self.radius])
-
-    def update_coords(self, vector, lattice_x, lattice_y, lattice_offset):
-        self.coords += vector
-
-        # check PBC
-        wrapping_vector = np.asarray([0, 0])
-        if self.coords[0] > (lattice_offset[0] + lattice_x):
-            wrapping_vector[0] -= lattice_x
-        if self.coords[0] < lattice_offset[0]:
-            wrapping_vector[0] += lattice_x
-
-        if self.coords[1] > (lattice_offset[1] + lattice_y):
-            wrapping_vector[1] -= lattice_y
-        if self.coords[1] < lattice_offset[1]:
-            wrapping_vector[1] += lattice_y
-
-        self.coords += wrapping_vector
-        self.graphic_coords = np.asarray([self.coords[0] - self.radius, self.coords[1] - self.radius,
-                                          self.coords[0] + self.radius, self.coords[1] + self.radius])
+    return random.random() * math.pi * 2
 
 
 class UnitCell:
-    def __init__(self, num_atoms, frame_center):
+    def __init__(self, frame_center):
         # this doesn't do anything yet
         self.wpg = random.choice(['p1', 'p2', 'pmm', 'p4'])
         self.step_size = 30
 
         self.frame_center = frame_center
-        self.lattice_x = (random.random() * 100) + 50
-        self.lattice_y = (random.random() * 100) + 50
+        self.lattice_x = ((random.random() * 3) + 1.5) * ANG2PIX
+        self.lattice_y = ((random.random() * 3) + 1.5) * ANG2PIX
         self.calc_lattice_offset()
 
-        self.num_atoms = num_atoms
+        self.num_atoms = 0
         self.atoms = []
+        self.molecules = []
+        self.all_mol_atoms = []
 
-        for ind in range(num_atoms):
-            self.create_atoms(type='LJ')
+        # for ind in range(5):
+        #     self.create_atoms(type='LJ')
+
+        for ind in range(3):
+            frac_x, frac_y = get_random_coords()
+            coords = np.asarray([frac_x * self.lattice_x, frac_y * self.lattice_y])
+            coords += self.lattice_offset
+            x, y = coords
+            theta = get_random_rotation()
+
+            # create water Molecule
+            molecule = Molecule.init_water(x, y, theta)
+            mol_atoms = []
+            for atom in molecule.atoms:
+                self.atoms.append(atom)
+                mol_atoms.append(deepcopy(self.num_atoms))
+                self.num_atoms += 1
+
+            self.molecules.append(molecule)
+            self.all_mol_atoms.append(mol_atoms)
 
         self.update_images()
+
+        # calculate atom-atom epsilon and sigma values
+        self.epsilon_vector = []
+        self.sigma_vector = []
+        for ind0, atom0 in enumerate(self.atoms):
+            atom0_atomN_epsilon = []
+            atom0_atomN_sigma = []
+            for ind1, atom1 in enumerate(self.atoms):
+                epsilon = (atom0.epsilon + atom1.epsilon) / 2
+                sigma = (atom0.sigma + atom1.sigma) / 2
+                atom0_atomN_epsilon.append(epsilon)
+                atom0_atomN_sigma.append(sigma)
+
+            atom0_pbc_epsilon = (np.asarray([image.epsilon for image in self.images]) + atom0.epsilon) / 2
+            atom0_pbc_sigma = (np.asarray([image.sigma for image in self.images]) + atom0.sigma) / 2
+
+            atom0_atomN_epsilon.append(atom0_pbc_epsilon)
+            atom0_atomN_sigma.append(atom0_pbc_sigma)
+
+            self.epsilon_vector.append(atom0_atomN_epsilon)
+            self.sigma_vector.append(atom0_atomN_sigma)
+
+
+        # make sure we have no interactions within molecules
+        if len(self.molecules) > 0:
+            for mol_atoms in self.all_mol_atoms:
+                for atom0_ind in mol_atoms:
+                    for atom1_ind in mol_atoms:
+                        self.epsilon_vector[atom0_ind][atom1_ind] = 0
+                        self.sigma_vector[atom0_ind][atom1_ind] = 1
 
 
     def calc_lattice_offset(self):
@@ -134,14 +151,12 @@ class UnitCell:
         for ind0, atom0 in enumerate(self.atoms):
             for ind1, atom1 in enumerate(self.atoms):
                 if not ind0 == ind1:
-                    #r = calc_r(atom0.coords, atom1.coords)
                     r = self.aa_vectors[ind0][ind1]
-                    energy = calc_lj_energy(r, atom0.epsilon, atom0.sigma)
+                    energy = calc_lj_energy(r, self.epsilon_vector[ind0][ind1], self.sigma_vector[ind0][ind1])
                     total_energy += energy
 
-            #pbc_rs = calc_r(atom0.coords, self.image_coords)
             pbc_rs = self.aa_vectors[ind0][-1]
-            pbc_energies = calc_lj_energy(pbc_rs, atom0.epsilon, atom0.sigma)
+            pbc_energies = calc_lj_energy(pbc_rs, self.epsilon_vector[ind0][-1], self.sigma_vector[ind0][-1])
             for pbc_energy in pbc_energies:
                 total_energy += pbc_energy
 
@@ -160,15 +175,14 @@ class UnitCell:
             component_forces = []
             for ind1, atom1 in enumerate(self.atoms):
                 if not ind0 == ind1:
-                    #r = calc_r(atom0.coords, atom1.coords)
                     r = self.aa_vectors[ind0][ind1]
-                    force = calc_lj_force(r, atom0.epsilon, atom0.sigma)
+                    force = calc_lj_force(r, self.epsilon_vector[ind0][ind1], self.sigma_vector[ind0][ind1])
                     vector = calc_atom_atom_vector(atom0.coords, atom1.coords)
                     component_forces.append(calc_force_vector(force, vector))
 
-            #pbc_rs = calc_r(atom0.coords, self.image_coords)
+            pbc_rs = calc_r(atom0.coords, self.image_coords)
             pbc_rs = self.aa_vectors[ind0][-1]
-            pbc_forces = calc_lj_force(pbc_rs, atom0.epsilon, atom0.sigma)
+            pbc_forces = calc_lj_force(pbc_rs, self.epsilon_vector[ind0][-1], self.sigma_vector[ind0][-1])
             pbc_vectors = calc_atom_atom_vector(atom0.coords, self.image_coords)
             pbc_force_vectors = calc_force_vector(pbc_forces, pbc_vectors)
             for force_vector in pbc_force_vectors:
@@ -195,10 +209,16 @@ class UnitCell:
         volume = self.lattice_x * self.lattice_y
 
         frac_coords = []
-        for atom in self.atoms:
-            coords = atom.coords
-            atom_frac_coords = (coords - self.lattice_offset) / np.array([self.lattice_x, self.lattice_y])
-            frac_coords.append(atom_frac_coords)
+        if len(self.molecules) == 0:
+            for atom in self.atoms:
+                coords = atom.coords
+                atom_frac_coords = (coords - self.lattice_offset) / np.array([self.lattice_x, self.lattice_y])
+                frac_coords.append(atom_frac_coords)
+        else:
+            for molecule in self.molecules:
+                mol_CoM = molecule.get_CoM()
+                mol_frac_coords = (mol_CoM - self.lattice_offset) / np.array([self.lattice_x, self.lattice_y])
+                frac_coords.append(mol_frac_coords)
 
         for axis in ['x', 'y']:
             ext_cell = deepcopy(self)
@@ -213,12 +233,27 @@ class UnitCell:
             ext_cell.calc_lattice_offset()
             comp_cell.calc_lattice_offset()
 
-            for ind, atom_frac_coords in enumerate(frac_coords):
-                ext_cell.atoms[ind].coords = ext_cell.lattice_offset + (atom_frac_coords * np.array([ext_cell.lattice_x, ext_cell.lattice_y]))
-                ext_cell.update_images()
+            if len(self.molecules) == 0:
+                for ind, atom_frac_coords in enumerate(frac_coords):
+                    ext_cell.atoms[ind].coords = ext_cell.lattice_offset + (atom_frac_coords * np.array([ext_cell.lattice_x, ext_cell.lattice_y]))
+                    ext_cell.update_images()
 
-                comp_cell.atoms[ind].coords = comp_cell.lattice_offset + (atom_frac_coords * np.array([comp_cell.lattice_x, comp_cell.lattice_y]))
-                comp_cell.update_images()
+                    comp_cell.atoms[ind].coords = comp_cell.lattice_offset + (atom_frac_coords * np.array([comp_cell.lattice_x, comp_cell.lattice_y]))
+                    comp_cell.update_images()
+            else:
+                for mol_ind, molecule in enumerate(ext_cell.molecules):
+                    mol_frac_coords = frac_coords[mol_ind]
+                    new_mol_CoM = ext_cell.lattice_offset + (mol_frac_coords * np.array([ext_cell.lattice_x, ext_cell.lattice_y]))
+                    CoM_vector = new_mol_CoM - molecule.CoM
+                    molecule.translate_molecule(CoM_vector, ext_cell.lattice_x, ext_cell.lattice_y, ext_cell.lattice_offset)
+                    ext_cell.update_images()
+
+                for mol_ind, molecule in enumerate(comp_cell.molecules):
+                    mol_frac_coords = frac_coords[mol_ind]
+                    new_mol_CoM = comp_cell.lattice_offset + (mol_frac_coords * np.array([comp_cell.lattice_x, comp_cell.lattice_y]))
+                    CoM_vector = new_mol_CoM - molecule.CoM
+                    molecule.translate_molecule(CoM_vector, comp_cell.lattice_x, comp_cell.lattice_y, comp_cell.lattice_offset)
+                    comp_cell.update_images()
 
             energy_change = comp_cell.get_energy() - ext_cell.get_energy()
             if axis == 'x':
@@ -242,24 +277,60 @@ class UnitCell:
         forces = self.get_forces()
         stress = self.get_stress()
 
-        max_force = 0
-        for force in forces["resultant_forces"]:
-            max_force_local = max(force.min(), force.max(), key=abs)
-            if max_force_local > max_force:
-                max_force = max_force_local
+        # max_force = 0
+        # for force in forces["resultant_forces"]:
+        #     max_force_local = max(force.min(), force.max(), key=abs)
+        #     if max_force_local > max_force:
+        #         max_force = max_force_local
 
-        for ind, atom in enumerate(self.atoms):
-            vector = self.step_size * forces["resultant_forces"][ind]
-            vector = limit_vector_mag(vector)
-            atom.update_coords(vector, self.lattice_x, self.lattice_y, self.lattice_offset)
+        if len(self.molecules) == 0:
+            for ind, atom in enumerate(self.atoms):
+                vector = self.step_size * forces["resultant_forces"][ind]
+                vector = limit_vector_mag(vector)
+                atom.update_coords(vector, self.lattice_x, self.lattice_y, self.lattice_offset)
+        else:
+            for mol_ind, molecule in enumerate(self.molecules):
+                molecular_forces = []
+                for atom_ind in self.all_mol_atoms[mol_ind]:
+                    molecular_forces.append(forces["resultant_forces"][atom_ind])
+                net_force = np.sum(np.asarray(molecular_forces), axis=0)
+                vector = net_force * self.step_size
+                vector = limit_vector_mag(vector)
+                molecule.translate_molecule(vector, self.lattice_x, self.lattice_y, self.lattice_offset)
+
+                # do torques now
+                molecule.get_atom_CoM_vectors()
+                torque = 0
+                for atom_ind, atom in enumerate(molecule.atoms):
+                    atom_CoM_vector = molecule.atom_CoM_vectors[atom_ind]
+                    atom_force = molecular_forces[atom_ind]
+
+                    torque_comp = np.cross(atom_CoM_vector, atom_force)
+                    torque += torque_comp
+
+                rotation = torque * self.step_size
+                if rotation > (molecule.theta_per_ang * 3):
+                    rotation = molecule.theta_per_ang * 3
+                elif rotation < (molecule.theta_per_ang * -3):
+                    rotation = molecule.theta_per_ang * -3
+
+                rot_mat = get_rotation_matrix(rotation)
+                molecule.rotate_molecule(rot_mat)
 
         # update lattice parameters
         if variable_cell:
             frac_coords = []
-            for atom in self.atoms:
-                coords = atom.coords
-                atom_frac_coords = (coords - self.lattice_offset) / np.array([self.lattice_x, self.lattice_y])
-                frac_coords.append(atom_frac_coords)
+            if len(self.molecules) == 0:
+                for atom in self.atoms:
+                    coords = atom.coords
+                    atom_frac_coords = (coords - self.lattice_offset) / np.array([self.lattice_x, self.lattice_y])
+                    frac_coords.append(atom_frac_coords)
+            else:
+                frac_coords = []
+                for molecule in self.molecules:
+                    mol_CoM = molecule.get_CoM()
+                    mol_frac_coords = (mol_CoM - self.lattice_offset) / np.array([self.lattice_x, self.lattice_y])
+                    frac_coords.append(mol_frac_coords)
 
             x_step = self.step_size * stress[0][0]
             y_step = self.step_size * stress[1][1]
@@ -275,8 +346,18 @@ class UnitCell:
             self.lattice_x += x_step
             self.lattice_y += y_step
             self.calc_lattice_offset()
-            for ind, atom_frac_coords in enumerate(frac_coords):
-                self.atoms[ind].coords = self.lattice_offset + (atom_frac_coords * np.array([self.lattice_x, self.lattice_y]))
+
+            if len(self.molecules) == 0:
+                for ind, atom_frac_coords in enumerate(frac_coords):
+                    self.atoms[ind].coords = (
+                            self.lattice_offset + (atom_frac_coords * np.array([self.lattice_x, self.lattice_y])))
+            else:
+                for mol_ind, molecule in enumerate(self.molecules):
+                    mol_frac_coords = frac_coords[mol_ind]
+                    new_mol_CoM = self.lattice_offset + (mol_frac_coords * np.array([self.lattice_x, self.lattice_y]))
+                    CoM_vector = new_mol_CoM - molecule.CoM
+                    molecule.translate_molecule(CoM_vector, self.lattice_x, self.lattice_y, self.lattice_offset)
+
 
         self.update_images()
 

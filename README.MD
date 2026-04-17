@@ -8,9 +8,10 @@
  - Gradient descent
  - Lennard-Jones forces
  - Variable cells
+ - Molecules
 
 ## Upcoming Features
+ - Electrostatics
  - Symmetry
  - BFGS
- - Molecules
  - Convergence Plot
