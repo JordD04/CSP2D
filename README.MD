@@ -9,9 +9,9 @@
  - Lennard-Jones forces
  - Variable cells
  - Molecules
+ - Electrostatics
 
 ## Upcoming Features
- - Electrostatics
  - Symmetry
  - BFGS
  - Convergence Plot
