@@ -6,6 +6,7 @@ import math
 # 30 pixels = 1 angstroms
 
 ANG2PIX = 30
+ke = 14.3996
 
 ATOM_TYPING = \
     {'LJ': {'epsilon'   : 1,
@@ -13,7 +14,7 @@ ATOM_TYPING = \
             'colour'    : 'crimson',
             'radius'    : 0.5 * ANG2PIX,
             'mass'      : 1,
-            'charge'    : 0},
+            'charge'    : 1},
      'H': {'epsilon'    : 0,
             'sigma'     : 1 * ANG2PIX,
             'colour'    : 'white',
@@ -61,6 +62,32 @@ def calc_lj_energy(r, epsilon, sigma):
 
     return 0.5 * coefficient * (repulsive - attractive)
 
+def calc_coulomb_force(r, qprod):
+
+    return - (ke * qprod) / (r ** 2)
+
+def calc_coulomb_energy(r, qprod):
+
+    return (ke * qprod) / r
+
+def calc_total_force(r, qprod, epsilon, sigma):
+    lj_force = calc_lj_force(r, epsilon, sigma)
+    coulomb_force = calc_coulomb_force(r, qprod)
+
+    return lj_force + coulomb_force
+
+    # return calc_coulomb_force(r, qprod)
+    # return calc_lj_force(r, epsilon, sigma)
+
+def calc_total_energy(r, qprod, epsilon, sigma):
+    lj_energy = calc_lj_energy(r, epsilon, sigma)
+    coulomb_energy = calc_coulomb_energy(r, qprod)
+
+    return lj_energy + coulomb_energy
+
+    # return calc_coulomb_energy(r, qprod)
+    # return calc_lj_energy(r, epsilon, sigma)
+
 def limit_vector_mag(vector, max_step_size=3):
     mag = np.linalg.norm(vector)
     if mag > max_step_size:
@@ -78,6 +105,7 @@ class Atom:
         typing = ATOM_TYPING[type]
         self.epsilon = typing['epsilon']
         self.sigma = typing['sigma']
+        self.q = typing['charge']
         if colourless:
             self.colour = 'black'
         else:

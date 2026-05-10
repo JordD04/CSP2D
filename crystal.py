@@ -57,23 +57,30 @@ class UnitCell:
         # calculate atom-atom epsilon and sigma values
         self.epsilon_vector = []
         self.sigma_vector = []
+        self.qprod_vector = []
         for ind0, atom0 in enumerate(self.atoms):
             atom0_atomN_epsilon = []
             atom0_atomN_sigma = []
+            atom0_atomN_qprod = []
             for ind1, atom1 in enumerate(self.atoms):
                 epsilon = (atom0.epsilon + atom1.epsilon) / 2
                 sigma = (atom0.sigma + atom1.sigma) / 2
+                qprod = atom0.q * atom1.q
                 atom0_atomN_epsilon.append(epsilon)
                 atom0_atomN_sigma.append(sigma)
+                atom0_atomN_qprod.append(qprod)
 
             atom0_pbc_epsilon = (np.asarray([image.epsilon for image in self.images]) + atom0.epsilon) / 2
             atom0_pbc_sigma = (np.asarray([image.sigma for image in self.images]) + atom0.sigma) / 2
+            atom0_pbc_qprod = (np.asarray([image.q for image in self.images]) * atom0.q)
 
             atom0_atomN_epsilon.append(atom0_pbc_epsilon)
             atom0_atomN_sigma.append(atom0_pbc_sigma)
+            atom0_atomN_qprod.append(atom0_pbc_qprod)
 
             self.epsilon_vector.append(atom0_atomN_epsilon)
             self.sigma_vector.append(atom0_atomN_sigma)
+            self.qprod_vector.append(atom0_atomN_qprod)
 
 
         # make sure we have no interactions within molecules
@@ -152,11 +159,13 @@ class UnitCell:
             for ind1, atom1 in enumerate(self.atoms):
                 if not ind0 == ind1:
                     r = self.aa_vectors[ind0][ind1]
-                    energy = calc_lj_energy(r, self.epsilon_vector[ind0][ind1], self.sigma_vector[ind0][ind1])
+                    #energy = calc_lj_energy(r, self.epsilon_vector[ind0][ind1], self.sigma_vector[ind0][ind1])
+                    energy = calc_total_energy(r, self.qprod_vector[ind0][ind1], self.epsilon_vector[ind0][ind1], self.sigma_vector[ind0][ind1])
                     total_energy += energy
 
             pbc_rs = self.aa_vectors[ind0][-1]
-            pbc_energies = calc_lj_energy(pbc_rs, self.epsilon_vector[ind0][-1], self.sigma_vector[ind0][-1])
+            #pbc_energies = calc_lj_energy(pbc_rs, self.epsilon_vector[ind0][-1], self.sigma_vector[ind0][-1])
+            pbc_energies = calc_total_energy(pbc_rs, self.qprod_vector[ind0][-1], self.epsilon_vector[ind0][-1], self.sigma_vector[ind0][-1])
             for pbc_energy in pbc_energies:
                 total_energy += pbc_energy
 
@@ -176,13 +185,15 @@ class UnitCell:
             for ind1, atom1 in enumerate(self.atoms):
                 if not ind0 == ind1:
                     r = self.aa_vectors[ind0][ind1]
-                    force = calc_lj_force(r, self.epsilon_vector[ind0][ind1], self.sigma_vector[ind0][ind1])
+                    #force = calc_lj_force(r, self.epsilon_vector[ind0][ind1], self.sigma_vector[ind0][ind1])
+                    force = calc_total_force(r, self.qprod_vector[ind0][ind1], self.epsilon_vector[ind0][ind1], self.sigma_vector[ind0][ind1])
                     vector = calc_atom_atom_vector(atom0.coords, atom1.coords)
                     component_forces.append(calc_force_vector(force, vector))
 
             pbc_rs = calc_r(atom0.coords, self.image_coords)
             pbc_rs = self.aa_vectors[ind0][-1]
-            pbc_forces = calc_lj_force(pbc_rs, self.epsilon_vector[ind0][-1], self.sigma_vector[ind0][-1])
+            #pbc_forces = calc_lj_force(pbc_rs, self.epsilon_vector[ind0][-1], self.sigma_vector[ind0][-1])
+            pbc_forces = calc_total_force(pbc_rs, self.qprod_vector[ind0][-1], self.epsilon_vector[ind0][-1], self.sigma_vector[ind0][-1])
             pbc_vectors = calc_atom_atom_vector(atom0.coords, self.image_coords)
             pbc_force_vectors = calc_force_vector(pbc_forces, pbc_vectors)
             for force_vector in pbc_force_vectors:
